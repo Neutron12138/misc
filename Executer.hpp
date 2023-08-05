@@ -68,6 +68,7 @@ namespace vm
             POP,
             SYSCALL,
             CALL,
+            RET,
 
             CAST,
             ADD,
@@ -115,7 +116,7 @@ namespace vm
 
     struct Value
     {
-        enum Type
+        enum Type : Int
         {
             NIL = 0,
             BOOL,
@@ -176,7 +177,7 @@ namespace vm
                 break;
 
             default:
-                throw "type error";
+                throw VM_UTILS_TYPE_ERROR(from.m_type);
                 break;
             }
 
@@ -214,7 +215,7 @@ namespace vm
             return static_cast<T>(val.m_str);
 
         default:
-            throw "type error";
+            throw VM_UTILS_TYPE_ERROR(val.m_type);
         }
     }
 
@@ -248,7 +249,7 @@ namespace vm
             return !val.m_str.empty();
 
         default:
-            throw "type error";
+            throw VM_UTILS_TYPE_ERROR(val.m_type);
         }
     }
 
@@ -276,7 +277,7 @@ namespace vm
             return !val.m_str.empty();
 
         default:
-            throw "type error";
+            throw VM_UTILS_TYPE_ERROR(val.m_type);
         }
     }
 
@@ -304,7 +305,7 @@ namespace vm
             return std::stoll(val.m_str);
 
         default:
-            throw "type error";
+            throw VM_UTILS_TYPE_ERROR(val.m_type);
         }
     }
 
@@ -332,7 +333,7 @@ namespace vm
             return std::stod(val.m_str);
 
         default:
-            throw "type error";
+            throw VM_UTILS_TYPE_ERROR(val.m_type);
         }
     }
 
@@ -345,7 +346,7 @@ namespace vm
             return "null";
 
         case Value::BOOL:
-            return val.m_b ? "true" : "false";
+            return to_string(val.m_b);
 
         case Value::BYTE:
             return to_string(val.m_ub);
@@ -360,7 +361,7 @@ namespace vm
             return val.m_str;
 
         default:
-            throw "type error";
+            throw VM_UTILS_TYPE_ERROR(val.m_type);
         }
     }
 
@@ -383,6 +384,21 @@ namespace vm
         return std::make_shared<Value>(val);
     }
 
+    // ----------系统调用----------
+
+    namespace SysCall
+    {
+        enum Basic : Int
+        {
+            EXIT = 0,
+            INPUT,
+            PRINT,
+
+            COUNT,
+        };
+
+    } // namespace SysCall
+
     // ----------执行器----------
 
     class Executer
@@ -396,8 +412,8 @@ namespace vm
         };
 
     public:
-        VarList m_vars;
-        InstList m_insts;
+        VarList m_vars = {};
+        InstList m_insts = {};
         Int m_curr_inst = 0;
         State m_state = PAUSED;
 
@@ -418,11 +434,23 @@ namespace vm
             return m_vars.size() - 1;
         }
 
-        Reference remove_var()
+        Reference remove_ref()
         {
-            const Reference &var = m_vars.at(m_vars.size() - 1);
+            if (m_vars.empty())
+                throw VM_UTILS_LIST_ERROR(0, 0);
+
+            Reference var = m_vars.at(m_vars.size() - 1);
             m_vars.pop_back();
+
             return var;
+        }
+
+        Value remove_val()
+        {
+            if (m_vars.empty())
+                throw VM_UTILS_LIST_ERROR(0, 0);
+
+            return remove_ref()->copy();
         }
 
         std::size_t add_inst(const Instruction &inst)
@@ -438,10 +466,65 @@ namespace vm
             return m_insts.size() - insts.size();
         }
 
-    public:
-        void run(Int index = 0)
+        Reference &get_var(std::size_t index)
         {
-            add_val(m_curr_inst);
+            if (index >= m_vars.size())
+                throw VM_UTILS_LIST_ERROR(index, m_vars.size());
+
+            return m_vars.at(index);
+        }
+
+        const Reference &get_var(std::size_t index) const
+        {
+            if (index >= m_vars.size())
+                throw VM_UTILS_LIST_ERROR(index, m_vars.size());
+
+            return m_vars.at(index);
+        }
+
+        Instruction &get_inst(std::size_t index)
+        {
+            if (index >= m_insts.size())
+                throw VM_UTILS_LIST_ERROR(index, m_insts.size());
+
+            return m_insts.at(index);
+        }
+
+        const Instruction &get_inst(std::size_t index) const
+        {
+            if (index >= m_insts.size())
+                throw VM_UTILS_LIST_ERROR(index, m_insts.size());
+
+            return m_insts.at(index);
+        }
+
+        void print_vars()
+        {
+            for (auto iter = m_vars.cbegin(); iter != m_vars.cend(); iter++)
+                std::cout << **iter << ", ";
+            std::cout << std::endl;
+        }
+
+        void print_insts()
+        {
+            for (auto iter = m_insts.cbegin(); iter != m_insts.cend(); iter++)
+                std::cout << *iter << ", ";
+            std::cout << std::endl;
+        }
+
+        void print_separator()
+        {
+            std::cout << "--------------------" << std::endl;
+        }
+
+    public:
+        void debug_run(
+            Int index,
+            bool print_vars_before_step,
+            bool print_vars_after_step,
+            bool print_separator_before_step,
+            bool print_separator_after_step)
+        {
             m_curr_inst = index;
             m_state = RUNNING;
 
@@ -449,13 +532,26 @@ namespace vm
             {
                 while (m_state == RUNNING)
                 {
+                    const Instruction &inst = get_inst(m_curr_inst);
 
-                    const Instruction &inst = m_insts.at(m_curr_inst);
+                    if (print_separator_before_step)
+                        print_separator();
+
+                    if (print_vars_before_step)
+                        print_vars();
+
                     run_inst(inst);
+
+                    if (print_vars_after_step)
+                        print_vars();
+
+                    if (print_separator_after_step)
+                        print_separator();
+
                     m_curr_inst++;
                 }
             }
-            catch (const char *e)
+            catch (const String &e)
             {
                 std::cout << "[" << e << "]" << std::endl;
                 m_state = ABORTED;
@@ -465,6 +561,11 @@ namespace vm
                 std::cout << "[" << e.what() << "]" << std::endl;
                 m_state = ABORTED;
             }
+        }
+
+        void run(Int index = 0)
+        {
+            debug_run(index, false, false, false, false);
         }
 
         void resume()
@@ -579,7 +680,7 @@ namespace vm
                 break;
 
             default:
-                throw "error instruction";
+                throw VM_UTILS_INSTRUCTION_ERROR(inst.m_opcode, inst.m_operand);
                 break;
             }
         }
@@ -605,15 +706,14 @@ namespace vm
                 return remainder(num0, num1);
 
             default:
-                throw "op error";
+                throw VM_UTILS_INSTRUCTION_ERROR(op, 0);
             }
         }
 
         Value binary_calculate(Int op, Int arg)
         {
-            const Value &val1 = *remove_var();
-            const Value &val0 = *remove_var();
-            Value result;
+            Value val1 = remove_val();
+            Value val0 = remove_val();
 
             switch (arg)
             {
@@ -621,24 +721,19 @@ namespace vm
             {
                 Int num0 = value_cast<Int>(val0);
                 Int num1 = value_cast<Int>(val1);
-                result = binary_calculate(op, num0, num1);
+                return Value(binary_calculate(op, num0, num1));
             }
-            break;
 
             case Value::FLOAT:
             {
                 Float num0 = value_cast<Float>(val0);
                 Float num1 = value_cast<Float>(val1);
-                result = binary_calculate(op, num0, num1);
+                return Value(binary_calculate(op, num0, num1));
             }
-            break;
 
             default:
-                throw "type error";
-                break;
+                throw VM_UTILS_TYPE_ERROR(arg);
             }
-
-            return result;
         }
 
         template <typename T>
@@ -665,13 +760,13 @@ namespace vm
                 return val >= static_cast<T>(0);
 
             default:
-                throw "op error";
+                throw VM_UTILS_INSTRUCTION_ERROR(op, 0);
             }
         }
 
         bool condition_jump(Int op)
         {
-            const Value &val = *remove_var();
+            Value val = remove_val();
 
             switch (val.m_type)
             {
@@ -682,8 +777,90 @@ namespace vm
                 return condition_jump(op, val.m_f);
 
             default:
-                throw "type error";
+                throw VM_UTILS_TYPE_ERROR(val.m_type);
             }
+        }
+
+        template <typename T>
+        Value input()
+        {
+            T in;
+            std::cin >> in;
+            return Value(in);
+        }
+
+        Value input(Value::Type type)
+        {
+            switch (type)
+            {
+            case Value::BOOL:
+                return input<Bool>();
+
+            case Value::BYTE:
+                return input<Byte>();
+
+            case Value::INT:
+                return input<Int>();
+
+            case Value::FLOAT:
+                return input<Float>();
+
+            case Value::STRING:
+                return input<String>();
+
+            case Value::NIL:
+            default:
+                throw VM_UTILS_TYPE_ERROR(type);
+            }
+        }
+
+        void syscall(Int code)
+        {
+            switch (code)
+            {
+            case SysCall::EXIT:
+                pause();
+                break;
+
+            case SysCall::INPUT:
+            {
+                Value val = remove_val();
+                Int type = value_cast<Int>(val);
+                Value in = input(static_cast<Value::Type>(type));
+                add_val(in);
+            }
+            break;
+
+            case SysCall::PRINT:
+            {
+                Value cval = remove_val();
+                Int count = value_cast<Int>(cval);
+
+                if (count <= 0)
+                    throw VM_UTILS_ARGUMENT_ERROR(count);
+
+                for (std::size_t i = 0; i < count; i++)
+                    std::cout << value_cast<String>(remove_val());
+            }
+            break;
+
+            default:
+                throw VM_UTILS_INSTRUCTION_ERROR(Instruction::SYSCALL, code);
+                break;
+            }
+        }
+
+        void call(Int index)
+        {
+            add_val(m_curr_inst);
+            m_curr_inst = index;
+        }
+
+        void ret()
+        {
+            Value val = remove_val();
+            Int index = value_cast<Int>(val);
+            m_curr_inst = index;
         }
 
     public:
@@ -693,13 +870,13 @@ namespace vm
 
         void execute_mov(Int arg)
         {
-            Reference ref = remove_var();
-            m_vars.at(arg) = ref;
+            Reference ref = remove_ref();
+            get_var(arg) = ref;
         }
 
         void execute_push(Int arg)
         {
-            m_vars.push_back(m_vars.at(arg));
+            add_val(get_var(arg)->copy());
         }
 
         void execute_pop()
@@ -709,15 +886,22 @@ namespace vm
 
         void execute_syscall(Int arg)
         {
+            syscall(arg);
         }
 
         void execute_call(Int arg)
         {
+            call(arg);
+        }
+
+        void execute_ret()
+        {
+            ret();
         }
 
         void execute_cast(Int arg)
         {
-            const Value &val = *remove_var();
+            Value val = remove_val();
             Value result;
 
             switch (arg)
@@ -747,7 +931,7 @@ namespace vm
                 break;
 
             default:
-                throw "type error";
+                throw VM_UTILS_TYPE_ERROR(arg);
                 break;
             }
 
