@@ -50,7 +50,7 @@ namespace vm
 
     using Nil = std::nullptr_t;
     using Bool = bool;
-    using Byte = unsigned char;
+    using Byte = signed char;
     using Int = std::int64_t;
     using Float = double;
     using String = std::string;
@@ -69,11 +69,13 @@ namespace vm
             SYSCALL,
             CALL,
 
+            CAST,
             ADD,
             SUB,
             MUL,
             DIV,
             MOD,
+            CMP,
 
             JMP,
             JE,
@@ -82,13 +84,19 @@ namespace vm
             JLE,
             JG,
             JGE,
+
+            RESUME,
+            PAUSE,
+            ABORT,
+
+            COUNT,
         };
 
         OpCode m_opcode = NOP;
-        std::array<Int, 2> m_operands = {0, 0};
+        Int m_operand = 0;
 
-        Instruction(OpCode opc = NOP, const std::array<Int, 2> &ope = {0, 0})
-            : m_opcode(opc), m_operands(ope) {}
+        Instruction(OpCode opc = NOP, Int ope = 0)
+            : m_opcode(opc), m_operand(ope) {}
     };
 
     std::ostream &operator<<(std::ostream &os, const Instruction &inst)
@@ -96,9 +104,7 @@ namespace vm
         os << "["
            << inst.m_opcode
            << ","
-           << inst.m_operands[0]
-           << ","
-           << inst.m_operands[1]
+           << inst.m_operand
            << "]";
         return os;
     }
@@ -382,9 +388,18 @@ namespace vm
     class Executer
     {
     public:
+        enum State : Int
+        {
+            RUNNING = 0,
+            PAUSED,
+            ABORTED,
+        };
+
+    public:
         VarList m_vars;
         InstList m_insts;
-        std::size_t m_curr_inst = 0;
+        Int m_curr_inst = 0;
+        State m_state = PAUSED;
 
     public:
         std::size_t add_val(const Value &val)
@@ -424,32 +439,197 @@ namespace vm
         }
 
     public:
-        void execute_push(Int arg0)
+        void run(Int index = 0)
         {
-            m_vars.push_back(m_vars.at(arg0));
+            add_val(m_curr_inst);
+            m_curr_inst = index;
+            m_state = RUNNING;
+
+            try
+            {
+                while (m_state == RUNNING)
+                {
+
+                    const Instruction &inst = m_insts.at(m_curr_inst);
+                    run_inst(inst);
+                    m_curr_inst++;
+                }
+            }
+            catch (const char *e)
+            {
+                std::cout << "[" << e << "]" << std::endl;
+                m_state = ABORTED;
+            }
+            catch (const std::exception &e)
+            {
+                std::cout << "[" << e.what() << "]" << std::endl;
+                m_state = ABORTED;
+            }
         }
 
-        void execute_add(Int arg0)
+        void resume()
+        {
+            run(m_curr_inst);
+        }
+
+        void pause()
+        {
+            m_state = PAUSED;
+        }
+
+        void abort()
+        {
+            m_state = ABORTED;
+        }
+
+        void run_inst(const Instruction &inst)
+        {
+            switch (inst.m_opcode)
+            {
+            case Instruction::NOP:
+                execute_nop();
+                break;
+
+            case Instruction::MOV:
+                execute_mov(inst.m_operand);
+                break;
+
+            case Instruction::PUSH:
+                execute_push(inst.m_operand);
+                break;
+
+            case Instruction::POP:
+                execute_pop();
+                break;
+
+            case Instruction::SYSCALL:
+                execute_syscall(inst.m_operand);
+                break;
+
+            case Instruction::CALL:
+                execute_call(inst.m_operand);
+                break;
+
+            case Instruction::CAST:
+                execute_cast(inst.m_operand);
+                break;
+
+            case Instruction::ADD:
+                execute_add(inst.m_operand);
+                break;
+
+            case Instruction::SUB:
+                execute_sub(inst.m_operand);
+                break;
+
+            case Instruction::MUL:
+                execute_mul(inst.m_operand);
+                break;
+
+            case Instruction::DIV:
+                execute_div(inst.m_operand);
+                break;
+
+            case Instruction::MOD:
+                execute_mod(inst.m_operand);
+                break;
+
+            case Instruction::CMP:
+                execute_cmp(inst.m_operand);
+                break;
+
+            case Instruction::JMP:
+                execute_jmp(inst.m_operand);
+                break;
+
+            case Instruction::JE:
+                execute_je(inst.m_operand);
+                break;
+
+            case Instruction::JNE:
+                execute_jne(inst.m_operand);
+                break;
+
+            case Instruction::JL:
+                execute_jl(inst.m_operand);
+                break;
+
+            case Instruction::JLE:
+                execute_jle(inst.m_operand);
+                break;
+
+            case Instruction::JG:
+                execute_jg(inst.m_operand);
+                break;
+
+            case Instruction::JGE:
+                execute_jge(inst.m_operand);
+                break;
+
+            case Instruction::RESUME:
+                execute_resume();
+                break;
+
+            case Instruction::PAUSE:
+                execute_pause();
+                break;
+
+            case Instruction::ABORT:
+                execute_abort();
+                break;
+
+            default:
+                throw "error instruction";
+                break;
+            }
+        }
+
+        template <typename T>
+        T binary_calculate(Int op, const T &num0, const T &num1)
+        {
+            switch (op)
+            {
+            case Instruction::ADD:
+                return num0 + num1;
+
+            case Instruction::SUB:
+                return num0 - num1;
+
+            case Instruction::MUL:
+                return num0 * num1;
+
+            case Instruction::DIV:
+                return num0 / num1;
+
+            case Instruction::MOD:
+                return remainder(num0, num1);
+
+            default:
+                throw "op error";
+            }
+        }
+
+        Value binary_calculate(Int op, Int arg)
         {
             const Value &val1 = *remove_var();
             const Value &val0 = *remove_var();
             Value result;
 
-            switch (arg0)
+            switch (arg)
             {
             case Value::INT:
             {
                 Int num0 = value_cast<Int>(val0);
                 Int num1 = value_cast<Int>(val1);
-                result = num0 + num1;
+                result = binary_calculate(op, num0, num1);
             }
             break;
 
             case Value::FLOAT:
             {
-                Int num0 = value_cast<Float>(val0);
-                Int num1 = value_cast<Float>(val1);
-                result = num0 + num1;
+                Float num0 = value_cast<Float>(val0);
+                Float num1 = value_cast<Float>(val1);
+                result = binary_calculate(op, num0, num1);
             }
             break;
 
@@ -458,7 +638,206 @@ namespace vm
                 break;
             }
 
+            return result;
+        }
+
+        template <typename T>
+        bool condition_jump(Int op, const T &val)
+        {
+            switch (op)
+            {
+            case Instruction::JE:
+                return val == static_cast<T>(0);
+
+            case Instruction::JNE:
+                return val != static_cast<T>(0);
+
+            case Instruction::JL:
+                return val < static_cast<T>(0);
+
+            case Instruction::JLE:
+                return val <= static_cast<T>(0);
+
+            case Instruction::JG:
+                return val > static_cast<T>(0);
+
+            case Instruction::JGE:
+                return val >= static_cast<T>(0);
+
+            default:
+                throw "op error";
+            }
+        }
+
+        bool condition_jump(Int op)
+        {
+            const Value &val = *remove_var();
+
+            switch (val.m_type)
+            {
+            case Value::INT:
+                return condition_jump(op, val.m_i);
+
+            case Value::FLOAT:
+                return condition_jump(op, val.m_f);
+
+            default:
+                throw "type error";
+            }
+        }
+
+    public:
+        void execute_nop()
+        {
+        }
+
+        void execute_mov(Int arg)
+        {
+            Reference ref = remove_var();
+            m_vars.at(arg) = ref;
+        }
+
+        void execute_push(Int arg)
+        {
+            m_vars.push_back(m_vars.at(arg));
+        }
+
+        void execute_pop()
+        {
+            m_vars.pop_back();
+        }
+
+        void execute_syscall(Int arg)
+        {
+        }
+
+        void execute_call(Int arg)
+        {
+        }
+
+        void execute_cast(Int arg)
+        {
+            const Value &val = *remove_var();
+            Value result;
+
+            switch (arg)
+            {
+            case Value::NIL:
+                result = value_cast<Nil>(val);
+                break;
+
+            case Value::BOOL:
+                result = value_cast<Bool>(val);
+                break;
+
+            case Value::BYTE:
+                result = value_cast<Byte>(val);
+                break;
+
+            case Value::INT:
+                result = value_cast<Int>(val);
+                break;
+
+            case Value::FLOAT:
+                result = value_cast<Float>(val);
+                break;
+
+            case Value::STRING:
+                result = value_cast<String>(val);
+                break;
+
+            default:
+                throw "type error";
+                break;
+            }
+
             add_val(result);
+        }
+
+        void execute_add(Int arg)
+        {
+            add_val(binary_calculate(Instruction::ADD, arg));
+        }
+
+        void execute_sub(Int arg)
+        {
+            add_val(binary_calculate(Instruction::SUB, arg));
+        }
+
+        void execute_mul(Int arg)
+        {
+            add_val(binary_calculate(Instruction::MUL, arg));
+        }
+
+        void execute_div(Int arg)
+        {
+            add_val(binary_calculate(Instruction::DIV, arg));
+        }
+
+        void execute_mod(Int arg)
+        {
+            add_val(binary_calculate(Instruction::MOD, arg));
+        }
+
+        void execute_cmp(Int arg)
+        {
+            execute_sub(arg);
+        }
+
+        void execute_jmp(Int arg)
+        {
+            m_curr_inst += arg;
+        }
+
+        void execute_je(Int arg)
+        {
+            if (condition_jump(Instruction::JE))
+                m_curr_inst += arg;
+        }
+
+        void execute_jne(Int arg)
+        {
+            if (condition_jump(Instruction::JNE))
+                m_curr_inst += arg;
+        }
+
+        void execute_jl(Int arg)
+        {
+            if (condition_jump(Instruction::JL))
+                m_curr_inst += arg;
+        }
+
+        void execute_jle(Int arg)
+        {
+            if (condition_jump(Instruction::JLE))
+                m_curr_inst += arg;
+        }
+
+        void execute_jg(Int arg)
+        {
+            if (condition_jump(Instruction::JG))
+                m_curr_inst += arg;
+        }
+
+        void execute_jge(Int arg)
+        {
+            if (condition_jump(Instruction::JGE))
+                m_curr_inst += arg;
+        }
+
+        void execute_resume()
+        {
+            resume();
+        }
+
+        void execute_pause()
+        {
+            pause();
+        }
+
+        void execute_abort()
+        {
+            abort();
         }
     };
 

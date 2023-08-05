@@ -25,16 +25,11 @@ int main(int argc, char *argv[])
 
     // 执行器测试
     vm::Executer exe;
-    exe.add_val(vm::Int(10));
-    exe.add_val(vm::Int(20));
-    exe.execute_push(0);
-    exe.execute_push(1);
-    exe.execute_push(0);
-    exe.execute_push(1);
-    exe.execute_add(vm::Value::INT);
-    exe.execute_add(vm::Value::INT);
-    exe.execute_add(vm::Value::INT);
-    std::cout << vm::value_cast<vm::Int>(*exe.remove_var()) << std::endl;
+    exe.m_insts = {
+        vm::Instruction(vm::Instruction::NOP),
+        vm::Instruction(vm::Instruction::PAUSE),
+    };
+    exe.run();
 
     return 0;
 }
